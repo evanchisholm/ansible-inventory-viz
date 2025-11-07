@@ -17,18 +17,25 @@ const stylesheet = [
       "font-size": 10,
       "border-width": 2,
       "border-color": "#2F4EA2",
-      color: "#fff",
+      color: "#1a3a7a",
       padding: "6px",
     },
   },
   {
     selector: 'node[type="group"]',
-    style: { shape: "round-rectangle", "background-color": "#4C7BD9" },
+    style: {
+      shape: "round-rectangle",
+      width: "80px",
+      height: "10px",
+      "background-color": "#4C7BD9",
+    },
   },
   {
     selector: 'node[type="host"]',
     style: {
-      shape: "ellipse",
+      shape: "round-rectangle",
+      width: "80px",
+      height: "10px",
       "background-color": "#4CD98F",
       "border-color": "#2FA26A",
     },
@@ -55,6 +62,19 @@ const stylesheet = [
   {
     selector: "node:selected",
     style: { "border-width": 4, "border-color": "#222" },
+  },
+  {
+    selector: 'node[warning="true"]',
+    style: {
+      "background-color": "#FF8C42",
+      "border-color": "#D96704",
+    },
+  },
+  {
+    selector: 'node[warning="true"]:selected',
+    style: {
+      "border-color": "#222",
+    },
   },
 ];
 
@@ -87,14 +107,22 @@ const layouts = {
 export default function InventoryGraph({ graph, showVars, onToggleVars }) {
   const elements = useMemo(
     () => [
-      ...graph.nodes.map((n) => ({
-        data: {
-          id: n.id,
-          label: n.label,
-          type: n.type,
-          vars: JSON.stringify(n.vars || {}, null, 2),
-        },
-      })),
+      ...graph.nodes.map((n) => {
+        const vars = n.vars || {};
+        const hasWarning =
+          vars.warning === true ||
+          vars.warning === "true" ||
+          String(vars.warning).toLowerCase() === "true";
+        return {
+          data: {
+            id: n.id,
+            label: n.label,
+            type: n.type,
+            vars: JSON.stringify(vars, null, 2),
+            warning: hasWarning ? "true" : "false",
+          },
+        };
+      }),
       ...graph.links.map((e) => ({
         data: { source: e.source, target: e.target },
       })),
@@ -108,7 +136,16 @@ export default function InventoryGraph({ graph, showVars, onToggleVars }) {
 
   useEffect(() => {
     if (!cyRef.current) return;
-    cyRef.current.on("select", "node", (evt) => setSelected(evt.target.data()));
+    cyRef.current.on("select", "node", (evt) => {
+      const node = evt.target;
+      const data = node.data();
+      const children = node.outgoers("node");
+      const childCount = children.length;
+      const childNames = children.map((child) => child.data().label).sort();
+      const parents = node.incomers("node");
+      const parentName = parents.length > 0 ? parents[0].data().label : null;
+      setSelected({ ...data, childCount, childNames, parentName });
+    });
     cyRef.current.on("unselect", "node", () => setSelected(null));
   }, []);
 
@@ -116,16 +153,37 @@ export default function InventoryGraph({ graph, showVars, onToggleVars }) {
     if (cyRef.current) cyRef.current.layout(layouts[layout]).run();
   }, [layout, elements]);
 
+  const selectNodeByLabel = (label) => {
+    if (!cyRef.current) return;
+    // Unselect all nodes first
+    cyRef.current.nodes().unselect();
+    // Find and select the node with the matching label
+    const node = cyRef.current.nodes().filter((n) => n.data().label === label);
+    if (node.length > 0) {
+      node.select();
+      // Center the node in view
+      cyRef.current.animate({
+        fit: {
+          eles: node,
+          padding: 100,
+        },
+        duration: 500,
+      });
+    }
+  };
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateRows: "48px 1fr 180px",
+        gridTemplateRows: "48px 1fr",
+        gridTemplateColumns: "250px 1fr",
         height: "100%",
       }}
     >
       <div
         style={{
+          gridColumn: "1 / -1",
           display: "flex",
           alignItems: "center",
           gap: 8,
@@ -172,6 +230,151 @@ export default function InventoryGraph({ graph, showVars, onToggleVars }) {
         </button>
       </div>
 
+      <div
+        style={{
+          borderRight: "1px solid #e5e5e5",
+          padding: "8px 12px",
+          overflow: "auto",
+          background: "#fafafa",
+        }}
+      >
+        <b>Selection:</b>
+        {selected ? (
+          <div>
+            {selected.type === "group" ? (
+              <div style={{ marginTop: "8px" }}>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Group:</strong> {selected.label}
+                </div>
+                <div style={{ marginBottom: "12px" }}>
+                  <strong>Children:</strong> {selected.childCount}
+                </div>
+                {selected.childNames && selected.childNames.length > 0 && (
+                  <div>
+                    <strong>Child nodes:</strong>
+                    <ul
+                      style={{
+                        fontSize: "13px",
+                        marginTop: "8px",
+                        paddingLeft: "0",
+                        listStyle: "none",
+                      }}
+                    >
+                      {selected.childNames.map((name, idx) => (
+                        <li
+                          key={idx}
+                          onClick={() => selectNodeByLabel(name)}
+                          style={{
+                            cursor: "pointer",
+                            color: "#4C7BD9",
+                            textDecoration: "none",
+                            marginBottom: "6px",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            transition: "background-color 0.2s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.backgroundColor = "#e8f0ff";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.backgroundColor = "transparent";
+                          }}
+                        >
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : selected.type === "host" ? (
+              <div style={{ marginTop: "8px" }}>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Host:</strong> {selected.label}
+                </div>
+                {(() => {
+                  try {
+                    const vars = JSON.parse(selected.vars);
+                    const hasWarning =
+                      vars.warning === true || vars.warning === "true";
+                    return (
+                      <div style={{ fontSize: "12px" }}>
+                        {Object.entries(vars).map(([key, value]) => {
+                          const isWarning =
+                            key === "warning" &&
+                            (value === true || value === "true");
+                          const isWarningNote = key === "note" && hasWarning;
+                          return (
+                            <div
+                              key={key}
+                              style={{
+                                marginBottom: "6px",
+                                ...((isWarning || isWarningNote) && {
+                                  padding: "8px",
+                                  backgroundColor: "#FFF3E0",
+                                  border: "2px solid #FF8C42",
+                                  borderRadius: "4px",
+                                  color: "#D96704",
+                                  fontWeight: "bold",
+                                }),
+                              }}
+                            >
+                              <strong>{key}:</strong> {String(value)}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  } catch {
+                    return (
+                      <div style={{ fontSize: "12px" }}>{selected.vars}</div>
+                    );
+                  }
+                })()}
+                {selected.parentName && (
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      fontSize: "12px",
+                      paddingTop: "8px",
+                      borderTop: "1px solid #ddd",
+                    }}
+                  >
+                    <strong>Parent: </strong>
+                    <span
+                      onClick={() => selectNodeByLabel(selected.parentName)}
+                      style={{
+                        cursor: "pointer",
+                        color: "#4C7BD9",
+                        textDecoration: "none",
+                        padding: "4px 8px",
+                        borderRadius: "4px",
+                        transition: "background-color 0.2s",
+                        display: "inline-block",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = "#e8f0ff";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = "transparent";
+                      }}
+                    >
+                      {selected.parentName}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ marginTop: "8px" }}>(variable node)</div>
+            )}
+          </div>
+        ) : (
+          <div style={{ color: "#666", marginTop: "8px" }}>
+            Click a node to see details
+          </div>
+        )}
+      </div>
+
       <CytoscapeComponent
         elements={elements}
         layout={layouts[layout]}
@@ -184,24 +387,6 @@ export default function InventoryGraph({ graph, showVars, onToggleVars }) {
         maxZoom={3}
         wheelSensitivity={0.2}
       />
-
-      <div
-        style={{
-          borderTop: "1px solid #e5e5e5",
-          padding: "8px 12px",
-          overflow: "auto",
-          background: "#fafafa",
-        }}
-      >
-        <b>Selection:</b>
-        {selected ? (
-          <pre style={{ whiteSpace: "pre-wrap" }}>
-            {selected.vars || "(group/var)"}
-          </pre>
-        ) : (
-          <div style={{ color: "#666" }}>Click a host to see its variables</div>
-        )}
-      </div>
     </div>
   );
 }
